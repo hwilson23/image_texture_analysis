@@ -2,20 +2,18 @@ import numpy as np
 import tifffile as tiff
 import os
 from skimage.feature import graycomatrix, graycoprops
-from skimage.util import img_as_ubyte
-from skimage import exposure
 import matplotlib.pyplot as plt
 from joblib import Parallel, delayed
-
+import glob
 from skimage.feature import graycomatrix, graycoprops
-from skimage import data
 
 
 # --- parameters ---
-IMAGE_PATH  = r"G:/FluorescentCollagen/20260302_ows2_col/appliedMASKmean_flu_8bit_testpatch.tif"
+loc  = r"G:/FluorescentCollagen/20260302_ows2_col/appliedMASKimages"
 out_dir = r"G:/FluorescentCollagen/20260302_ows2_col/texturemap"
-stackname = r"flu"
+stacknames = ["flu", "bkwshg","fwdshg"]
 kernelsize = 5
+filelist = []
 
 # ------------------
 
@@ -43,11 +41,23 @@ def sliding_window(image, kernelsize, stride=1, angles=0):
 
                 dis = graycoprops(glcm, 'dissimilarity')  # shape (4,) — one value per angle
                 cor = graycoprops(glcm, 'correlation')    # shape (4,)
+                contrast = graycoprops(glcm, 'contrast')
+                homogeneity = graycoprops(glcm, 'homogeneity')
+                asm = graycoprops(glcm,'ASM')
+                glcmmean = graycoprops(glcm,'mean')
+                glcmvar = graycoprops(glcm,'variance')
+                entropy = graycoprops(glcm, 'entropy')
 
                 outputdis[i,j] = np.mean(dis)  # equivalent to your per-angle mean
                 outputcor[i,j] = np.mean(cor) 
+                outcontrast[i,j] = np.mean(contrast)
+                outhom[i,j] = np.mean(homogeneity)
+                outasm[i,j] = np.mean(asm)
+                outglcmmean[i,j] = np.mean(glcmmean)
+                outglcmvar[i,j] = np.mean(glcmvar)
+                outent[i,j] = np.mean(entropy)
         
-    return outputdis,outputcor
+    return outputdis,outputcor, outcontrast, outhom, outasm, outglcmmean, outglcmvar, outent
 
 def process_z(z, imgpad, kernelsize):
     dis, cor = sliding_window(imgpad[:,:,z], kernelsize, stride=1,
@@ -56,50 +66,82 @@ def process_z(z, imgpad, kernelsize):
     return dis,cor
 
 
-img = tiff.imread(IMAGE_PATH).astype(np.uint8)
-img = np.transpose(img, (1,2,0))
-print(img.shape)
-#padding with 0 and keeping 0 in mask bc glcm cant handle NaNs. has some bias towards background now, but i figured better than mean
-#skipping calcuating values at 0 (for speed and so no texture calculated for background)
-imgpad = np.pad(img, [(kernelsize//2, kernelsize//2), (kernelsize//2, kernelsize//2), (0,0)], mode='constant', constant_values=0)
-print(imgpad.shape)
+for files in glob.glob(loc +'*appliedMaskmean'):
+    filelist.append(files)
+print(filelist)
 
-disimg = np.zeros(img.shape)
-corimg = np.zeros(img.shape)
+for f in filelist:
+    img = tiff.imread((f"{loc}{f}")).astype(np.uint8)
+    img = np.transpose(img, (1,2,0))
+    print(img.shape)
+    #padding with 0 and keeping 0 in mask bc glcm cant handle NaNs. has some bias towards background now, but i figured better than mean
+    #skipping calcuating values at 0 (for speed and so no texture calculated for background)
+    imgpad = np.pad(img, [(kernelsize//2, kernelsize//2), (kernelsize//2, kernelsize//2), (0,0)], mode='constant', constant_values=0)
+    print(imgpad.shape)
 
-results = Parallel(n_jobs=-2)(  # uses all CPU cores
-    delayed(process_z)(z, imgpad, kernelsize)
-    for z in range(img.shape[2])
-)
+    disimg = np.zeros(img.shape)
+    corimg = np.zeros(img.shape)
+    outcontrast = np.zeros(img.shape)
+    outhom = np.zeros(img.shape)
+    outasm = np.zeros(img.shape)
+    outglcmmean = np.zeros(img.shape)
+    outglcmvar = np.zeros(img.shape)
+    outent = np.zeros(img.shape)
 
-for z, (dismean, cormean) in enumerate(results):
-    disimg[:,:,z] = dismean
-    corimg[:,:,z] = cormean
-    #for z in range(img.shape[2]):
-    #dissimilarity_angles, correlation_angles = sliding_window(imgpad[:,:,z], kernelsize,stride=1, angles =[0, np.pi/4, np.pi/2, 3* np.pi/4])
+    results = Parallel(n_jobs=-2)(  # uses all CPU cores except 1
+        delayed(process_z)(z, imgpad, kernelsize)
+        for z in range(img.shape[2])
+    )
 
-    #dismean = np.mean(dissimilarity_angles,axis=2)
-    #cormean = np.mean(correlation_angles,axis=2)
+    for z, (dismean, cormean, contrastmean, homogenitymean, asmmean, glcmmean, glcmvarmean, entropymean) in enumerate(results):
+        disimg[:,:,z] = dismean
+        corimg[:,:,z] = cormean
+        outcontrast[:,:,z] = contrastmean
+        outhom[:,:,z] = homogenitymean
+        outasm[:,:,z] = asmmean
+        outglcmmean[:,:,z] = glcmmean
+        outglcmvar[:,:,z] = glcmvarmean
+        outent[:,:,z] = entropymean
+        #for z in range(img.shape[2]):
+        #dissimilarity_angles, correlation_angles = sliding_window(imgpad[:,:,z], kernelsize,stride=1, angles =[0, np.pi/4, np.pi/2, 3* np.pi/4])
 
-    #disimg[:,:,z] = dismean
-    #corimg[:,:,z] = cormean
-    
+        #dismean = np.mean(dissimilarity_angles,axis=2)
+        #cormean = np.mean(correlation_angles,axis=2)
 
-out_path_dis = os.path.join(
-                out_dir,
-                f"{stackname}_dissimilaritymean.tif"
-            )
-out_path_cor = os.path.join(
-                out_dir,
-                f"{stackname}_correlationmean.tif"
-            )
+        #disimg[:,:,z] = dismean
+        #corimg[:,:,z] = cormean
+        
 
-disimg = np.transpose(disimg, (2, 0, 1)).astype(np.float32)
-corimg = np.transpose(corimg, (2, 0, 1)).astype(np.float32)
-print(disimg.shape)
+    out_path_dis = os.path.join(
+                    out_dir,
+                    f"{f[:-4]}_dissimilaritymean.tif"
+                )
+    out_path_cor = os.path.join(out_dir, f"{f[:-4]}_correlationmean.tif")
+    out_path_contrast = os.path.join(out_dir, f"{f[:-4]}_contrastmean.tif")
+    out_path_hom = os.path.join(out_dir, f"{f[:-4]}_homogeneitymean.tif")
+    out_path_asm = os.path.join(out_dir, f"{f[:-4]}_asmmean.tif")
+    out_path_mean = os.path.join(out_dir, f"{f[:-4]}_glcmmeanmean.tif")
+    out_path_var = os.path.join(out_dir, f"{f[:-4]}_glcmvariancemean.tif")
+    out_path_ent = os.path.join(out_dir, f"{f[:-4]}_entropymean.tif")
 
-tiff.imwrite(out_path_dis, disimg.astype(np.float32))
-tiff.imwrite(out_path_cor, corimg.astype(np.float32))
+    disimg = np.transpose(disimg, (2, 0, 1)).astype(np.float32)
+    corimg = np.transpose(corimg, (2, 0, 1)).astype(np.float32)
+    outcontrast = np.transpose(outcontrast, (2, 0, 1)).astype(np.float32)
+    outhom = np.transpose(outhom, (2, 0, 1)).astype(np.float32)
+    outasm = np.transpose(outasm, (2, 0, 1)).astype(np.float32)
+    outglcmmean = np.transpose(outglcmmean, (2, 0, 1)).astype(np.float32)
+    outglcmvar = np.transpose(outglcmvar, (2, 0, 1)).astype(np.float32)
+    outent = np.transpose(outent, (2, 0, 1)).astype(np.float32)
+    print(disimg.shape)
+
+    tiff.imwrite(out_path_dis, disimg.astype(np.float32))
+    tiff.imwrite(out_path_contrast, outcontrast.astype(np.float32))
+    tiff.imwrite(out_path_hom, outhom.astype(np.float32))
+    tiff.imwrite(out_path_asm, outasm.astype(np.float32))
+    tiff.imwrite(out_path_mean, outglcmmean.astype(np.float32))
+    tiff.imwrite(out_path_var, outglcmvar.astype(np.float32))
+    tiff.imwrite(out_path_cor, outent.astype(np.float32))
+    tiff.imwrite(out_path_cor, corimg.astype(np.float32))
 
 
 
