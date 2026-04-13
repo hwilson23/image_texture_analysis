@@ -92,7 +92,7 @@ for f in filelist:
         glcmmatriximg[:, :, z] = glcmmatrixmean
 
 
-    out_path_glcmmatrix = os.path.join(out_dir, f"{f[:-4]}_glcmmatrix.tif"))
+    out_path_glcmmatrix = os.path.join(out_dir, f"{f[:-4]}_glcmmatrix.tif")
 
     glcmmatriximg = np.transpose(glcmmatriximg, (2, 0, 1)).astype(np.float32)
     print(glcmmatriximg.shape)
